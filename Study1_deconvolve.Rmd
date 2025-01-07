@@ -1,0 +1,281 @@
+---
+title: "Deconvolve Study1 microarray"
+author: "Penghui Huang"
+date: "2024-10-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## CTB
+
+```{r}
+ctb<-read.delim("/storage/windows-backup/D drive/Penghui/collab/Study 1 data/ctbmbparray.txt",header=TRUE)
+ctb <- ctb[ctb$Gene != "NOGENE",]
+keep.gene <- names(table(ctb$Gene)[which(table(ctb$Gene) == 12)])
+ctb <- ctb[ctb$Gene %in% keep.gene,]
+dose<-factor(ctb$dose2, level=c(1,2,3,4), ordered=TRUE)
+genenumvec <- unique(ctb$genenum)
+ngenes <- length(genenumvec)
+genename<-as.character(ctb$Gene)
+genename <- unique(genename)
+
+xlabel <- unique(ctb$X_LABEL_)
+ctb_bulk <- list()
+for(i in 1:length(xlabel)){
+  tmp <- ctb[ctb$X_LABEL_ == xlabel[i],]
+  rownames(tmp) <- tmp$Gene
+  tmp <- tmp[genename,]
+  ctb_bulk <- c(ctb_bulk, list(as.vector(tmp$log2value)))
+}
+ctb_bulk <- rlist::list.cbind(ctb_bulk)
+rownames(ctb_bulk) <- genename
+colnames(ctb_bulk) <- xlabel
+```
+
+## Reference Prep
+```{r}
+load("/storage/windows-backup/D drive/Penghui/collab/ref_deconv/Broad.RData")
+load("/storage/windows-backup/D drive/Penghui/collab/ref_deconv/Suryawanshi_2018.RData")
+load("/storage/windows-backup/D drive/Penghui/collab/ref_deconv/Campbell_2022.RData")
+load("/storage/windows-backup/D drive/Penghui/collab/ref_deconv/Liu_2018.RData")
+Derisoud <- readxlsb::read_xlsb("/storage/windows-backup/D drive/Penghui/collab/Cell Deconvolution/Derisoud_2024/Supplementary Table S8.xlsb", sheet = "Average exp term")
+# There are some genes that occur twice or three times in the reference
+# These rows are identical
+# Only keep one occurence
+Derisoud <- unique.data.frame(Derisoud)
+rownames(Derisoud) <- Derisoud$Shee
+Derisoud <- as.matrix(Derisoud[,-1])
+
+colnames(Broad)
+colnames(Campbell_2022_cts)
+colnames(Liu_2018_cts)
+colnames(Suryawanshi_2018_cts)
+colnames(Derisoud)
+```
+
+```{r}
+# In total, 7 cell types
+
+Cytotrophoblasts <- list("Broad"=Broad[,"vCTB"],
+                         "Campbell"=rowMeans(Campbell_2022_cts[,c("Cytotrophoblasts","Proliferative Cytotrophoblasts")]),
+                         "Liu"=Liu_2018_cts[,"CTB"],
+                         "Suryawanshi"=Suryawanshi_2018_cts[,"VCT"])
+Extravillous_Trophoblasts <- list("Broad"=Broad[,"EVT"],
+                         "Liu"=Liu_2018_cts[,"EVT"],
+                         "Suryawanshi"=Suryawanshi_2018_cts[,"EVT"])
+Syncytiotrophoblasts <- list("Broad"=Broad[,"STB"],
+                           "Campbell"=Campbell_2022_cts[,"Syncytiotrophoblast"],
+                           "Liu"=Liu_2018_cts[,"STB"],
+                           "Suryawanshi"=Suryawanshi_2018_cts[,"SCT"])
+Hofbauer <- list("Broad"=Broad[,"Hofbauer cells"],
+                 "Campbell"=Campbell_2022_cts[,"Hofbauer Cells"],
+                 "Suryawanshi"=Suryawanshi_2018_cts[,"HC"])
+Stromal <- list("Broad"=Broad[,"Fibroblast"],
+                "Campbell"=Campbell_2022_cts[,"Fibroblasts"],
+                "Liu"=Liu_2018_cts[,"STR"],
+                "Suryawanshi"=Suryawanshi_2018_cts[,"FB"])
+Perivascular <- list("Suryawanshi"=Suryawanshi_2018_cts[,"VEC"],
+                     "Suryawanshi_rep"=Suryawanshi_2018_cts[,"VEC"])
+Endothelial <- list("Broad"=Broad[,"Endothelial_cells"],
+                    "Campbell"=Campbell_2022_cts[,"Endothelial Cells"],
+                    "Suryawanshi"=Suryawanshi_2018_cts[,"VEC"])
+```
+
+
+```{r}
+genes.shared <- Reduce(intersect, lapply(Cytotrophoblasts, names))
+Cytotrophoblasts <- lapply(Cytotrophoblasts, function(x){x[genes.shared]})
+Extravillous_Trophoblasts <- lapply(Extravillous_Trophoblasts, function(x){x[genes.shared]})
+Syncytiotrophoblasts <- lapply(Syncytiotrophoblasts, function(x){x[genes.shared]})
+Hofbauer <- lapply(Hofbauer, function(x){x[genes.shared]})
+Stromal <- lapply(Stromal, function(x){x[genes.shared]})
+Perivascular <- lapply(Perivascular, function(x){x[genes.shared]})
+Endothelial <- lapply(Endothelial, function(x){x[genes.shared]})
+
+Cytotrophoblasts <- rlist::list.cbind(Cytotrophoblasts)
+Extravillous_Trophoblasts <- rlist::list.cbind(Extravillous_Trophoblasts)
+Syncytiotrophoblasts <- rlist::list.cbind(Syncytiotrophoblasts)
+Hofbauer <- rlist::list.cbind(Hofbauer)
+Stromal <- rlist::list.cbind(Stromal)
+Perivascular <- rlist::list.cbind(Perivascular)
+Endothelial <- rlist::list.cbind(Endothelial)
+```
+
+
+```{r}
+ref.list <- list("Cytotrophoblasts"=Cytotrophoblasts,
+                 "Extravillous_Trophoblasts"=Extravillous_Trophoblasts,
+                 "Syncytiotrophoblasts"=Syncytiotrophoblasts,
+                 "Hofbauer"=Hofbauer,
+                 "Stromal"=Stromal,
+                 "Perivascular"=Perivascular,
+                 "Endothelial"=Endothelial)
+```
+
+
+```{r}
+length(intersect(rownames(ctb_bulk), rownames(ref.list[[1]])))
+```
+
+
+
+```{r}
+ctb_bulk_million <- 2^ctb_bulk
+for(i in 1:ncol(ctb_bulk_million)){
+  ctb_bulk_million[,i] <- (ctb_bulk_million[,i]/sum(ctb_bulk_million[,i]))*1000000
+}
+ctb_bulk_million <- round(ctb_bulk_million)
+```
+
+
+```{r}
+library(BLEND)
+ctb_res <- BLEND(bulk = ctb_bulk_million,
+                 phi = ref.list,
+                 alpha = 1.0001,
+                 beta=1.0001,
+                 ncore = 10,
+                 method = "EMMAP")
+ctb_frac <- rlist::list.rbind(lapply(ctb_res, function(x){x[[1]]}))
+ctb_frac
+```
+
+```{r}
+Derisoud <- readxlsb::read_xlsb("/storage/windows-backup/D drive/Penghui/collab/Cell Deconvolution/Derisoud_2024/Supplementary Table S8.xlsb", sheet = "Average exp term")
+Derisoud <- unique.data.frame(Derisoud)
+rownames(Derisoud) <- Derisoud[,1]
+Derisoud <- Derisoud[,-1]
+```
+
+```{r}
+library(EpiDISH)
+inter.gene <- intersect(rownames(Derisoud), rownames(ctb_bulk))
+Derisoud.epidish <- Derisoud[inter.gene,]
+ctb_bulk.epidish <- ctb_bulk[inter.gene,]
+Derisoud.epidish <- apply(Derisoud.epidish, 2, function(x){(x/sum(x))*10000})
+ctb_bulk.epidish <- apply(ctb_bulk.epidish, 2, function(x){(x/sum(x))*10000})
+res_epidish <- epidish(beta.m = (as.matrix(ctb_bulk.epidish)),
+                       ref.m = as.matrix(Derisoud.epidish),
+                       method = "RPC")
+summary(res_epidish$estF)
+```
+
+
+```{r}
+round(apply(res_epidish$estF, 2, mean),3)
+round(apply(res_epidish$estF, 2, sd),3)
+```
+
+
+
+First, the distribution of CTB microarray data look too normal. It is not skewed as
+sequencing data. It is weird. 
+
+I tried both BLEND and epidish to deconvolve microarray data. Neither can provided
+pure cell type. And the major cell type is not even CTB. Microarray data like this 
+may not be able to be deconvolved using regular bulk data deconvolution methods.
+
+
+
+
+
+## TBPC
+
+
+
+```{r}
+tbpc <- read.table("/storage/windows-backup/D drive/Penghui/collab/Study 1 data/tbpcmbparray.txt", header=T)
+meta <- unique.data.frame(tbpc[,4:6])
+head(meta)
+```
+
+
+```{r}
+sample.id <- unique(meta$X_LABEL_)
+genes <- table(tbpc$Gene)
+genes <- genes[genes == 15] 
+genes <- names(genes)
+bulk.list <- list()
+for(i in 1:length(sample.id)){
+  tmp <- tbpc[tbpc$X_LABEL_ == sample.id[i],c("Gene","log2value")]
+  tmp <- tmp[tmp$Gene %in% genes,]
+  rownames(tmp) <- tmp$Gene
+  tmp <- tmp[genes,]
+  tmp <- tmp$log2value
+  bulk.list <- c(bulk.list,list(tmp))
+}
+tbpc.bulk <- rlist::list.cbind(bulk.list)
+rownames(tbpc.bulk) <- genes
+colnames(tbpc.bulk) <- sample.id
+# put it back to linear scale
+tbpc.bulk <- 2^tbpc.bulk
+tbpc.bulk.round <- round(tbpc.bulk)
+```
+
+```{r}
+# Deconvolution with BLEND
+tbpc_res <- BLEND(bulk = tbpc.bulk.round,
+                 phi = ref.list,
+                 alpha = 1.0001,
+                 beta=1.0001,
+                 ncore = 10,
+                 method = "EMMAP")
+tbpc_frac <- rlist::list.rbind(lapply(tbpc_res, function(x){x[[1]]}))
+summary(tbpc_frac)
+```
+
+```{r}
+inter.gene <- intersect(rownames(Derisoud), rownames(tbpc.bulk))
+Derisoud.epidish <- Derisoud[inter.gene,]
+tbpc_bulk.epidish <- tbpc.bulk[inter.gene,]
+Derisoud.epidish <- apply(Derisoud.epidish, 2, function(x){(x/sum(x))*10000})
+tbpc_bulk.epidish <- apply(tbpc_bulk.epidish, 2, function(x){(x/sum(x))*10000})
+tbpc_epidish <- epidish(beta.m = (as.matrix(tbpc_bulk.epidish)),
+                       ref.m = as.matrix(Derisoud.epidish),
+                       method = "RPC")
+summary(tbpc_epidish$estF)
+```
+
+```{r}
+round(apply(tbpc_epidish$estF, 2, mean),3)
+round(apply(tbpc_epidish$estF, 2, sd),3)
+```
+
+
+
+The deconvolution results of tbpc microarray data using two different deconvolution methods
+shows roughly consistent patterns.
+Some CTB, EVT, More Stromal, Some perivascular.
+
+
+However, a good thing about these deconvolution results is that there is not much
+cell type abundance difference across samples. It means that adjusting for cell type
+abundance in DE analyses is not really important.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

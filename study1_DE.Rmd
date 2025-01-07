@@ -1,0 +1,984 @@
+---
+title: "Untitled"
+author: "Penghui Huang"
+date: "2024-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+ctb<-read.delim("/storage/windows-backup/D drive/Penghui/collab/Study 1 data/ctbmbparray.txt",header=TRUE)
+ctb <- ctb[ctb$Gene != "NOGENE",]
+keep.gene <- names(table(ctb$Gene)[which(table(ctb$Gene) == 12)])
+ctb <- ctb[ctb$Gene %in% keep.gene,]
+dose<-factor(ctb$dose2, level=c(1,2,3,4), ordered=TRUE)
+
+meta <- unique.data.frame(ctb[,c("X_LABEL_", "dose2", "rep", "sex", "gestage")])
+rownames(meta) <- meta$X_LABEL_
+meta <- meta[,-1]
+
+
+genenumvec <- unique(ctb$genenum)
+ngenes <- length(genenumvec)
+genename<-as.character(ctb$Gene)
+genename <- unique(genename)
+
+xlabel <- unique(ctb$X_LABEL_)
+ctb_bulk <- list()
+for(i in 1:length(xlabel)){
+  tmp <- ctb[ctb$X_LABEL_ == xlabel[i],]
+  rownames(tmp) <- tmp$Gene
+  tmp <- tmp[genename,]
+  ctb_bulk <- c(ctb_bulk, list(as.vector(tmp$log2value)))
+}
+ctb_bulk <- rlist::list.cbind(ctb_bulk)
+rownames(ctb_bulk) <- genename
+colnames(ctb_bulk) <- xlabel
+```
+
+
+
+```{r}
+print(meta)
+```
+
+
+```{r}
+library(limma)
+library(Biobase)
+ctb_bulk_linear_scale <- 2^ctb_bulk
+ctb_bulk_linear_scale <- edgeR::cpm(ctb_bulk_linear_scale)
+
+eset <- ExpressionSet(assayData=ctb_bulk_linear_scale)
+x <- c("dose2 - dose1", "dose3 - dose1","dose4 - dose1")
+design <- model.matrix(~ 0+factor(dose2)+gestage+sex, data = meta)
+colnames(design) <- c("dose1", "dose2", "dose3",
+                      "dose4", "gestage", "sex" )
+fit <- lmFit(eset, design)
+contrast.matrix <- makeContrasts(contrasts = x,
+                                 levels=design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+fit2 <- topTable(fit2, coef=c(1:3), adjust="BH")
+```
+
+
+
+
+```{r}
+eset <- ExpressionSet(assayData=ctb_bulk_linear_scale)
+x <- c("dose2 - dose1", "dose3 - dose1","dose4 - dose1")
+design <- model.matrix(~ 0+factor(dose2), data = meta)
+colnames(design) <- c("dose1", "dose2", "dose3",
+                      "dose4")
+fit <- lmFit(eset, design)
+contrast.matrix <- makeContrasts(contrasts = x,
+                                 levels=design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+fit2 <- topTable(fit2, coef=c(1:3), adjust="BH")
+```
+
+
+I cannot detect any DE signal from these two models.
+
+
+
+```{r}
+# visualize the "CGB" gene expression
+# Create a barplot
+# Extract the data
+values <- c(ctb_bulk_linear_scale["CGB",])
+
+values_matrix <- matrix(values, nrow = 3, byrow = FALSE,
+                        dimnames = list(c("Replicate 1", "Replicate 2", "Replicate 3"),
+                                        c("10um", "150nm", "10nm", "Control")))
+
+barplot(values_matrix, beside = TRUE, col = c("skyblue", "lightgreen", "pink"), 
+        main = "Grouped Bar Plot of CGB Values", 
+        xlab = "Condition", ylab = "Value", border = "white")
+
+
+```
+
+
+For differential expression analysis in study 1, 
+we can see clearly that there's an obvious individual difference to be adjusted.
+For example, the green bars are always higher. 
+The best way to adjust for this is to use random effect model.
+
+## Check gene expression distribution
+
+```{r}
+total_expr <- rowSums(ctb_bulk)
+hist(total_expr) # The distribution looks alright 
+```
+
+```{r}
+# Load meta informaiton
+library(readxl)
+hCG_MnBP_microarray <- read_excel("/storage/windows-backup/D drive/Penghui/collab/Study 1 data/hCG MnBP microarray.xls")
+hCG_MnBP_microarray_ctb <- hCG_MnBP_microarray[1:36,]
+ctb_concpg <- sapply(1:12, function(i){sum(hCG_MnBP_microarray_ctb[c((3*(i-1)+1):(3*i)),"concpg"])/3})
+names(ctb_concpg) <- c("ctbcontrol1", "ctb10nm1", "ctb150nm1","ctb10um1",
+                   "ctbcontrol2", "ctb10nm2", "ctb150nm2","ctb10um2",
+                   "ctbcontrol3", "ctb10nm3", "ctb150nm3","ctb10um3")
+ctb_concpg <- ctb_concpg[rownames(meta)]
+meta$concpg <- ctb_concpg
+hCG_MnBP_microarray_tbpc <- hCG_MnBP_microarray[37:76,]
+tbpc_concpg_1 <- sapply(1:10, function(i){sum(hCG_MnBP_microarray_tbpc[c((3*(i-1)+1):(3*i)),"concpg"])/3})
+tbpc_concpg_2 <- sapply(11:15, function(i){sum(hCG_MnBP_microarray_tbpc[c((2*(i-1)+1):(2*i)),"concpg"])/2})
+tbpc_concpg <- c(tbpc_concpg_1, tbpc_concpg_2)
+names(tbpc_concpg) <- c("tbpccontrol1", "tbpc10nm1", "tbpc150nm1", "tbpc5um1", "tbpc10um1",
+                        "tbpccontrol2", "tbpc10nm2", "tbpc150nm2", "tbpc5um2", "tbpc10um2",
+                        "tbpccontrol3", "tbpc10nm3", "tbpc150nm3", "tbpc5um3", "tbpc10um3")
+
+library(readxl)
+TBPC_cell_count_average <- read_excel("/storage/windows-backup/D drive/Penghui/collab/Study 1 data/TBPC_cell count_average.xls")
+tbpc_cellcount_1 <- sapply(1:10, function(i){sum(TBPC_cell_count_average[c((3*(i-1)+1):(3*i)),"count_average_total"])/3})
+tbpc_cellcount_2 <- sapply(11:15, function(i){sum(TBPC_cell_count_average[c((2*(i-1)+1):(2*i)),"count_average_total"])/2})
+tbpc_cellcount <- c(tbpc_cellcount_1, tbpc_cellcount_2)
+names(tbpc_cellcount) <- c("tbpccontrol1", "tbpc10nm1", "tbpc150nm1", "tbpc5um1", "tbpc10um1",
+                        "tbpccontrol2", "tbpc10nm2", "tbpc150nm2", "tbpc5um2", "tbpc10um2",
+                        "tbpccontrol3", "tbpc10nm3", "tbpc150nm3", "tbpc5um3", "tbpc10um3")
+```
+
+# DE for CTB
+
+```{r}
+#cor.test(meta$gestage, meta$concpg)
+# correlation -0.992294
+# p-value = 2.113e-10
+library(ggplot2)
+concpg_gestage_plot <- ggplot(meta, aes(x = gestage, y = concpg)) +
+  geom_smooth(method = "lm", color = "red", se = FALSE, linetype = "dashed") + 
+  geom_point(color = "black", size = 2) +
+  labs(x = "Gestational age", y = "hcg concentration") +
+  theme_minimal()+ 
+  theme(  # Remove all grid lines
+    axis.line = element_blank(),  # Remove axis lines
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1.2)) +
+  annotate("text", x = 19.5, y = 5200, label = "r = -0.99 \np-value = 2.11e-10", 
+  size = 4, color = "black")
+concpg_gestage_plot
+ggsave("/storage/windows-backup/D drive/Penghui/collab/study1_concpg_gestage.pdf", plot = concpg_gestage_plot, width = 5, height = 4)
+```
+
+
+
+
+```{r}
+meta$dose2 <- factor(meta$dose2)
+meta$rep <- factor(meta$rep)
+meta$sex <- factor(meta$sex)
+```
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(doParallel)
+library(foreach)
+```
+
+
+## Perform DE analysis using random intercept model
+
+I don't think there's much variability in cell type proportion for these samples.
+
+It's not a serious confounder. If included, the fitting issue will get worse
+
+### Dose
+
+```{r}
+# expr ~ ri + dose
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + dose2, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep), meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr,
+    ri.summary$coefficients[c("dose22"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose23"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose24"),c("Estimate","Pr(>|t|)")],
+    test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.dose <- rlist::list.rbind(pval.dose)
+rownames(pval.dose) <- rownames(ctb_bulk)
+colnames(pval.dose) <- c("meanlog2expr",
+                         "10nm_coef","10nm_pval",
+                         "150nm_coef","150nm_pval",
+                         "10um_coef","10um_pval",
+                         "all_dose_pval")
+pval.dose <- as.data.frame(pval.dose)
+pval.dose[,3] <- p.adjust(pval.dose[,3], method = "BH")
+pval.dose[,5] <- p.adjust(pval.dose[,5], method = "BH")
+pval.dose[,7] <- p.adjust(pval.dose[,7], method = "BH")
+pval.dose[,8] <- p.adjust(pval.dose[,8], method = "BH")
+```
+
+
+
+```{r}
+# expr ~ ri + dose + sex
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose.sex <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + dose2 + sex, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + sex, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+    
+  ri.summary <- summary(ri.model)
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr,
+    ri.summary$coefficients[c("dose22"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose23"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose24"),c("Estimate","Pr(>|t|)")],
+    test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.dose.sex <- rlist::list.rbind(pval.dose.sex)
+rownames(pval.dose.sex) <- rownames(ctb_bulk)
+colnames(pval.dose.sex) <- c("meanlog2expr",
+                         "10nm_coef","10nm_pval",
+                         "150nm_coef","150nm_pval",
+                         "10um_coef","10um_pval",
+                         "all_dose_pval")
+pval.dose.sex <- as.data.frame(pval.dose.sex)
+pval.dose.sex[,3] <- p.adjust(pval.dose.sex[,3], method = "BH")
+pval.dose.sex[,5] <- p.adjust(pval.dose.sex[,5], method = "BH")
+pval.dose.sex[,7] <- p.adjust(pval.dose.sex[,7], method = "BH")
+pval.dose.sex[,8] <- p.adjust(pval.dose.sex[,8], method = "BH")
+```
+
+```{r}
+# expr ~ ri + dose + ge
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose.ge <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  meta_tmp$rep <- factor(meta_tmp$rep)
+  meta_tmp$sex <- factor(meta_tmp$sex)
+  meta_tmp$dose2 <- factor(meta_tmp$dose2)
+  ri.model <- lmer(expr ~ (1 | rep) + dose2 + gestage, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + gestage, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+      
+  ri.summary <- summary(ri.model)
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr,
+    ri.summary$coefficients[c("dose22"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose23"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose24"),c("Estimate","Pr(>|t|)")],
+    test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.dose.ge <- rlist::list.rbind(pval.dose.ge)
+rownames(pval.dose.ge) <- rownames(ctb_bulk)
+colnames(pval.dose.ge) <- c("meanlog2expr",
+                         "10nm_coef","10nm_pval",
+                         "150nm_coef","150nm_pval",
+                         "10um_coef","10um_pval",
+                         "all_dose_pval")
+pval.dose.ge <- as.data.frame(pval.dose.ge)
+pval.dose.ge[,3] <- p.adjust(pval.dose.ge[,3], method = "BH")
+pval.dose.ge[,5] <- p.adjust(pval.dose.ge[,5], method = "BH")
+pval.dose.ge[,7] <- p.adjust(pval.dose.ge[,7], method = "BH")
+pval.dose.ge[,8] <- p.adjust(pval.dose.ge[,8], method = "BH")
+```
+
+
+```{r}
+# expr ~ ri + dose + sex + gestage
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose.sex.ge <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  meta_tmp$rep <- factor(meta_tmp$rep)
+  meta_tmp$sex <- factor(meta_tmp$sex)
+  meta_tmp$dose2 <- factor(meta_tmp$dose2)
+  ri.model <- lmer(expr ~ (1 | rep) + dose2 + sex + gestage, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + sex + gestage, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr,
+    ri.summary$coefficients[c("dose22"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose23"),c("Estimate","Pr(>|t|)")],
+    ri.summary$coefficients[c("dose24"),c("Estimate","Pr(>|t|)")],
+    test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.dose.sex.ge <- rlist::list.rbind(pval.dose.sex.ge)
+rownames(pval.dose.sex.ge) <- rownames(ctb_bulk)
+colnames(pval.dose.sex.ge) <- c("meanlog2expr",
+                         "10nm_coef","10nm_pval",
+                         "150nm_coef","150nm_pval",
+                         "10um_coef","10um_pval",
+                         "all_dose_pval")
+pval.dose.sex.ge <- as.data.frame(pval.dose.sex.ge)
+pval.dose.sex.ge[,3] <- p.adjust(pval.dose.sex.ge[,3], method = "BH")
+pval.dose.sex.ge[,5] <- p.adjust(pval.dose.sex.ge[,5], method = "BH")
+pval.dose.sex.ge[,7] <- p.adjust(pval.dose.sex.ge[,7], method = "BH")
+pval.dose.sex.ge[,8] <- p.adjust(pval.dose.sex.ge[,8], method = "BH")
+```
+
+
+```{r}
+# ctb.ri.mnbp.pval <- data.frame("pval.dose"=pval.dose,
+#                        "pval.dose.sex"=pval.dose.sex,
+#                        "pval.dose.ge"=pval.dose.ge,
+#                        "pval.dose.sex.ge"=pval.dose.sex.ge)
+# ctb.ri.mnbp.pval.bh <- apply(ctb.ri.mnbp.pval, 2, function(x){p.adjust(x, "BH")})
+# ctb.ri.mnbp.pval.bh <- as.data.frame(ctb.ri.mnbp.pval.bh)
+# library(openxlsx)
+# wb <- createWorkbook()
+# addWorksheet(wb, "ctb_ri_mnbp_pval")
+# addWorksheet(wb, "ctb_ri_mnbp_pval_bh")
+# writeData(wb, "ctb_ri_mnbp_pval", ctb.ri.mnbp.pval, rowNames = TRUE)
+# writeData(wb, "ctb_ri_mnbp_pval_bh", ctb.ri.mnbp.pval.bh, rowNames = TRUE)
+# saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_ctb_mnbp_ri.xlsx", overwrite = TRUE)
+# colSums(ctb.ri.mnbp.pval.bh < 0.05)
+```
+
+
+```{r}
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "pval.dose")
+writeData(wb, "pval.dose", pval.dose, rowNames = TRUE)
+
+addWorksheet(wb, "pval.dose.sex")
+writeData(wb, "pval.dose.sex", pval.dose.sex, rowNames = TRUE)
+
+addWorksheet(wb, "pval.dose.ge")
+writeData(wb, "pval.dose.ge", pval.dose.ge, rowNames = TRUE)
+
+addWorksheet(wb, "pval.dose.sex.ge")
+writeData(wb, "pval.dose.sex.ge", pval.dose.sex.ge, rowNames = TRUE)
+
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_ctb_dose_coef_pval.xlsx", overwrite = TRUE)
+```
+
+
+
+### concpg
+
+```{r}
+# expr ~ ri + concpg
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep), meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)$coefficients
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr, ri.summary["concpg","Estimate"], test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.concpg <- rlist::list.rbind(pval.concpg)
+rownames(pval.concpg) <- rownames(ctb_bulk)
+colnames(pval.concpg) <- c("meanlog2expr","concpg_coef","concpg_pval")
+pval.concpg <- as.data.frame(pval.concpg)
+pval.concpg$concpg_pval <- p.adjust(pval.concpg$concpg_pval, method = "BH")
+```
+
+
+
+```{r}
+# expr ~ ri + concpg + sex
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.sex <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg + sex, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + sex, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)$coefficients
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr, ri.summary["concpg","Estimate"], test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.concpg.sex <- rlist::list.rbind(pval.concpg.sex)
+rownames(pval.concpg.sex) <- rownames(ctb_bulk)
+colnames(pval.concpg.sex) <- c("meanlog2expr","concpg_coef","concpg_pval")
+pval.concpg.sex <- as.data.frame(pval.concpg.sex)
+pval.concpg.sex$concpg_pval <- p.adjust(pval.concpg.sex$concpg_pval, method = "BH")
+```
+
+```{r}
+# expr ~ ri + concpg + ge
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.ge <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg + gestage, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + gestage, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)$coefficients
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr, ri.summary["concpg","Estimate"], test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.concpg.ge <- rlist::list.rbind(pval.concpg.ge)
+rownames(pval.concpg.ge) <- rownames(ctb_bulk)
+colnames(pval.concpg.ge) <- c("meanlog2expr","concpg_coef","concpg_pval")
+pval.concpg.ge <- as.data.frame(pval.concpg.ge)
+pval.concpg.ge$concpg_pval <- p.adjust(pval.concpg.ge$concpg_pval, method = "BH")
+```
+
+
+```{r}
+# expr ~ ri + concpg + sex + gestage
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.sex.ge <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg + sex + gestage, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + sex + gestage, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)$coefficients
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr, ri.summary["concpg","Estimate"], test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.concpg.sex.ge <- rlist::list.rbind(pval.concpg.sex.ge)
+rownames(pval.concpg.sex.ge) <- rownames(ctb_bulk)
+colnames(pval.concpg.sex.ge) <- c("meanlog2expr","concpg_coef","concpg_pval")
+pval.concpg.sex.ge <- as.data.frame(pval.concpg.sex.ge)
+pval.concpg.sex.ge$concpg_pval <- p.adjust(pval.concpg.sex.ge$concpg_pval, method = "BH")
+```
+
+
+```{r}
+# expr ~ ri + concpg + sex + gestage + dose
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.sex.ge.dose <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg + sex + gestage + dose2, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + sex + gestage + dose2, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)$coefficients
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr, ri.summary["concpg","Estimate"], test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.concpg.sex.ge.dose <- rlist::list.rbind(pval.concpg.sex.ge.dose)
+rownames(pval.concpg.sex.ge.dose) <- rownames(ctb_bulk)
+colnames(pval.concpg.sex.ge.dose) <- c("meanlog2expr","concpg_coef","concpg_pval")
+pval.concpg.sex.ge.dose <- as.data.frame(pval.concpg.sex.ge.dose)
+pval.concpg.sex.ge.dose$concpg_pval <- p.adjust(pval.concpg.sex.ge.dose$concpg_pval, method = "BH")
+```
+
+
+```{r}
+# expr ~ ri + concpg + dose
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.dose <- foreach(i = 1:nrow(ctb_bulk), .packages = c("lme4", "lmerTest")) %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg + dose2, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep) + dose2, meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  
+  ri.summary <- summary(ri.model)$coefficients
+  mean.expr <- mean(meta_tmp$expr)
+  c(mean.expr, ri.summary["concpg","Estimate"], test.anova$`Pr(>Chisq)`[2])
+}
+stopCluster(cl)
+pval.concpg.dose <- rlist::list.rbind(pval.concpg.dose)
+rownames(pval.concpg.dose) <- rownames(ctb_bulk)
+colnames(pval.concpg.dose) <- c("meanlog2expr","concpg_coef","concpg_pval")
+pval.concpg.dose <- as.data.frame(pval.concpg.dose)
+pval.concpg.dose$concpg_pval <- p.adjust(pval.concpg.dose$concpg_pval, method = "BH")
+```
+
+
+```{r}
+# ctb.ri.concpg.pval <- data.frame("pval.concpg"=pval.concpg,
+#                        "pval.concpg.sex"=pval.concpg.sex,
+#                        "pval.concpg.ge"=pval.concpg.ge,
+#                        "pval.concpg.sex.ge"=pval.concpg.sex.ge,
+#                        "pval.concpg.sex.ge.dose"=pval.concpg.sex.ge.dose)
+# ctb.ri.concpg.pval.bh <- apply(ctb.ri.concpg.pval, 2, function(x){p.adjust(x, "BH")})
+# ctb.ri.concpg.pval.bh <- as.data.frame(ctb.ri.concpg.pval.bh)
+# library(openxlsx)
+# wb <- createWorkbook()
+# addWorksheet(wb, "ctb_ri_concpg_pval")
+# addWorksheet(wb, "ctb_ri_concpg_pval_bh")
+# writeData(wb, "ctb_ri_concpg_pval", ctb.ri.concpg.pval, rowNames = TRUE)
+# writeData(wb, "ctb_ri_concpg_pval_bh", ctb.ri.concpg.pval.bh, rowNames = TRUE)
+# saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_ctb_concpg_ri.xlsx", overwrite = TRUE)
+# colSums(ctb.ri.concpg.pval.bh < 0.05)
+```
+
+```{r}
+wb <- createWorkbook()
+
+addWorksheet(wb, "pval.concpg")
+writeData(wb, "pval.concpg", pval.concpg, rowNames = TRUE)
+
+addWorksheet(wb, "pval.concpg.sex")
+writeData(wb, "pval.concpg.sex", pval.concpg.sex, rowNames = TRUE)
+
+addWorksheet(wb, "pval.concpg.ge")
+writeData(wb, "pval.concpg.ge", pval.concpg.ge, rowNames = TRUE)
+
+addWorksheet(wb, "pval.concpg.sex.ge")
+writeData(wb, "pval.concpg.sex.ge", pval.concpg.sex.ge, rowNames = TRUE)
+
+addWorksheet(wb, "pval.concpg.sex.ge.dose")
+writeData(wb, "pval.concpg.sex.ge.dose", pval.concpg.sex.ge.dose, rowNames = TRUE)
+
+addWorksheet(wb, "pval.concpg.dose")
+writeData(wb, "pval.concpg.dose", pval.concpg.dose, rowNames = TRUE)
+
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_ctb_concpg_coef_pval.xlsx", overwrite = TRUE)
+```
+
+
+
+
+
+## Perform DE analysis by plain linear models (do not consider replicate)
+
+### dose
+
+```{r}
+# expr ~  dose
+num_cores <- 80 
+registerDoParallel(cl)
+pval.dose <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  dose2, meta_tmp)
+  null.model <- lm(expr ~ 1, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.dose) <- rownames(ctb_bulk)
+```
+
+
+
+```{r}
+# expr ~  dose + sex
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose.sex <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  dose2 + sex, meta_tmp)
+  null.model <- lm(expr ~ sex, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.dose.sex) <- rownames(ctb_bulk)
+```
+
+```{r}
+# expr ~  dose + ge
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose.sex <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  dose2 + gestage, meta_tmp)
+  null.model <- lm(expr ~ gestage, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.dose.ge) <- rownames(ctb_bulk)
+```
+
+
+```{r}
+# expr ~  dose +sex+ ge
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose.sex.ge <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  dose2 + gestage + sex, meta_tmp)
+  null.model <- lm(expr ~ gestage + sex, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.dose.sex.ge) <- rownames(ctb_bulk)
+```
+
+
+
+```{r}
+ctb.fixed.mnbp.pval <- data.frame("pval.dose"=pval.dose,
+                       "pval.dose.sex"=pval.dose.sex,
+                       "pval.dose.ge"=pval.dose.ge,
+                       "pval.dose.sex.ge"=pval.dose.sex.ge)
+ctb.fixed.mnbp.pval.bh <- apply(ctb.fixed.mnbp.pval, 2, function(x){p.adjust(x, "BH")})
+ctb.fixed.mnbp.pval.bh <- as.data.frame(ctb.fixed.mnbp.pval.bh)
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "ctb_ri_mnbp_pval")
+addWorksheet(wb, "ctb_ri_mnbp_pval_bh")
+writeData(wb, "ctb_ri_mnbp_pval", ctb.ri.mnbp.pval, rowNames = TRUE)
+writeData(wb, "ctb_ri_mnbp_pval_bh", ctb.ri.mnbp.pval.bh, rowNames = TRUE)
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_ctb_mnbp_fixed.xlsx", overwrite = TRUE)
+colSums(ctb.fixed.mnbp.pval.bh < 0.05)
+```
+
+
+### concpg
+
+```{r}
+# expr ~  concpg
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  concpg, meta_tmp)
+  null.model <- lm(expr ~ 1, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.concpg) <- rownames(ctb_bulk)
+```
+
+
+
+```{r}
+# expr ~  concpg + sex
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.sex <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  concpg + sex, meta_tmp)
+  null.model <- lm(expr ~ sex, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.concpg.sex) <- rownames(ctb_bulk)
+```
+
+```{r}
+# expr ~  concpg + ge
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.sex <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  concpg + gestage, meta_tmp)
+  null.model <- lm(expr ~ gestage, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.concpg.ge) <- rownames(ctb_bulk)
+```
+
+
+```{r}
+# expr ~  concpg +sex+ ge
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg.sex.ge <- foreach(i = 1:nrow(ctb_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- ctb_bulk[i, ]
+  full.model <- lm(expr ~  concpg + gestage + sex, meta_tmp)
+  null.model <- lm(expr ~ gestage + sex, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.concpg.sex.ge) <- rownames(ctb_bulk)
+```
+
+```{r}
+ctb.fixed.concpg.pval <- data.frame("pval.concpg"=pval.concpg,
+                       "pval.concpg.sex"=pval.concpg.sex,
+                       "pval.concpg.ge"=pval.concpg.ge,
+                       "pval.concpg.sex.ge"=pval.concpg.sex.ge)
+ctb.fixed.concpg.pval.bh <- apply(ctb.fixed.concpg.pval, 2, function(x){p.adjust(x, "BH")})
+ctb.fixed.concpg.pval.bh <- as.data.frame(ctb.fixed.concpg.pval.bh)
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "ctb_fixed_concpg_pval")
+addWorksheet(wb, "ctb_fixed_concpg_pval_bh")
+writeData(wb, "ctb_fixed_concpg_pval", ctb.ri.concpg.pval, rowNames = TRUE)
+writeData(wb, "ctb_fixed_concpg_pval_bh", ctb.ri.concpg.pval.bh, rowNames = TRUE)
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_ctb_concpg_fixed.xlsx", overwrite = TRUE)
+colSums(ctb.fixed.concpg.pval.bh < 0.05)
+```
+
+
+# TBPC
+
+```{r}
+tbpc <- read.table("/storage/windows-backup/D drive/Penghui/collab/Study 1 data/tbpcmbparray.txt", header=T)
+meta <- unique.data.frame(tbpc[,4:6])
+head(meta)
+```
+
+```{r}
+sample.id <- unique(meta$X_LABEL_)
+genes <- table(tbpc$Gene)
+genes <- genes[genes == 15] 
+genes <- names(genes)
+bulk.list <- list()
+for(i in 1:length(sample.id)){
+  tmp <- tbpc[tbpc$X_LABEL_ == sample.id[i],c("Gene","log2value")]
+  tmp <- tmp[tmp$Gene %in% genes,]
+  rownames(tmp) <- tmp$Gene
+  tmp <- tmp[genes,]
+  tmp <- tmp$log2value
+  bulk.list <- c(bulk.list,list(tmp))
+}
+tbpc_bulk <- rlist::list.cbind(bulk.list)
+rownames(tbpc_bulk) <- genes
+colnames(tbpc_bulk) <- sample.id # on log2 scale
+```
+
+```{r}
+tbpc_concpg <- tbpc_concpg[colnames(tbpc_bulk)]
+meta$concpg <- tbpc_concpg
+```
+
+```{r}
+meta$dose2 <- factor(meta$dose2)
+meta$rep <- factor(meta$rep)
+```
+
+
+## Perform DE analysis using random intercept model
+
+### dose
+
+```{r}
+# expr ~ ri + dose
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose <- foreach(i = 1:nrow(tbpc_bulk), .packages = c("lme4", "lmerTest"), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- tbpc_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + dose2, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep), meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  test.anova$`Pr(>Chisq)`[2]
+}
+stopCluster(cl)
+names(pval.dose) <- rownames(tbpc_bulk)
+```
+
+
+
+
+```{r}
+tbpc.ri.mnbp.pval <- data.frame("pval.dose"=pval.dose)
+tbpc.ri.mnbp.pval.bh <- apply(tbpc.ri.mnbp.pval, 2, function(x){p.adjust(x, "BH")})
+tbpc.ri.mnbp.pval.bh <- as.data.frame(tbpc.ri.mnbp.pval.bh)
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "tbpc_ri_mnbp_pval")
+addWorksheet(wb, "tbpc_ri_mnbp_pval_bh")
+writeData(wb, "tbpc_ri_mnbp_pval", tbpc.ri.mnbp.pval, rowNames = TRUE)
+writeData(wb, "tbpc_ri_mnbp_pval_bh", tbpc.ri.mnbp.pval.bh, rowNames = TRUE)
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_tbpc_mnbp_ri.xlsx", overwrite = TRUE)
+colSums(tbpc.ri.mnbp.pval.bh < 0.05)
+```
+
+
+
+### concpg
+
+```{r}
+# expr ~ ri + concpg
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg <- foreach(i = 1:nrow(tbpc_bulk), .packages = c("lme4", "lmerTest"), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- tbpc_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + concpg, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep), meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  test.anova$`Pr(>Chisq)`[2]
+}
+stopCluster(cl)
+names(pval.concpg) <- rownames(tbpc_bulk)
+```
+
+
+
+
+```{r}
+tbpc.ri.concpg.pval <- data.frame("pval.concpg"=pval.concpg)
+tbpc.ri.concpg.pval.bh <- apply(tbpc.ri.concpg.pval, 2, function(x){p.adjust(x, "BH")})
+tbpc.ri.concpg.pval.bh <- as.data.frame(tbpc.ri.concpg.pval.bh)
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "tbpc_ri_concpg_pval")
+addWorksheet(wb, "tbpc_ri_concpg_pval_bh")
+writeData(wb, "tbpc_ri_concpg_pval", tbpc.ri.concpg.pval, rowNames = TRUE)
+writeData(wb, "tbpc_ri_concpg_pval_bh", tbpc.ri.concpg.pval.bh, rowNames = TRUE)
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_tbpc_concpg_ri.xlsx", overwrite = TRUE)
+colSums(tbpc.ri.concpg.pval.bh < 0.05)
+```
+
+
+### cell counts
+
+```{r}
+# expr ~ ri + cell counts
+tbpc_cellcount <- tbpc_cellcount[colnames(tbpc_bulk)]
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.counts <- foreach(i = 1:nrow(tbpc_bulk), .packages = c("lme4", "lmerTest"), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$cell_counts <- tbpc_cellcount
+  meta_tmp$expr <- tbpc_bulk[i, ]
+  ri.model <- lmer(expr ~ (1 | rep) + cell_counts, meta_tmp)
+  null.model <- lmer(expr ~ (1 | rep), meta_tmp)
+  test.anova <- anova(null.model, ri.model)
+  test.anova$`Pr(>Chisq)`[2]
+}
+stopCluster(cl)
+names(pval.counts) <- rownames(tbpc_bulk)
+pval.counts <- unlist(pval.counts)
+pval.counts <- p.adjust(pval.counts, method = "BH")
+sum(pval.counts<0.05) #0
+```
+
+
+## Perform DE analysis by plain linear models (do not consider replicate)
+
+## dose
+
+```{r}
+# expr ~  dose
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.dose <- foreach(i = 1:nrow(tbpc_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- tbpc_bulk[i, ]
+  full.model <- lm(expr ~  dose2, meta_tmp)
+  null.model <- lm(expr ~ 1, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.dose) <- rownames(tbpc_bulk)
+```
+
+
+
+```{r}
+tbpc.fixed.mnbp.pval <- data.frame("pval.dose"=pval.dose)
+tbpc.fixed.mnbp.pval.bh <- apply(tbpc.fixed.mnbp.pval, 2, function(x){p.adjust(x, "BH")})
+tbpc.fixed.mnbp.pval.bh <- as.data.frame(tbpc.fixed.mnbp.pval.bh)
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "tbpc_ri_mnbp_pval")
+addWorksheet(wb, "tbpc_ri_mnbp_pval_bh")
+writeData(wb, "tbpc_ri_mnbp_pval", tbpc.ri.mnbp.pval, rowNames = TRUE)
+writeData(wb, "tbpc_ri_mnbp_pval_bh", tbpc.ri.mnbp.pval.bh, rowNames = TRUE)
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_tbpc_mnbp_fixed.xlsx", overwrite = TRUE)
+colSums(tbpc.fixed.mnbp.pval.bh < 0.05)
+```
+
+
+
+
+## concpg
+
+```{r}
+# expr ~  concpg
+num_cores <- 80 
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+pval.concpg <- foreach(i = 1:nrow(tbpc_bulk), .combine = 'c') %dopar% {
+  meta_tmp <- meta
+  meta_tmp$expr <- tbpc_bulk[i, ]
+  full.model <- lm(expr ~  concpg, meta_tmp)
+  null.model <- lm(expr ~ 1, meta_tmp)
+  test.anova <- anova(null.model, full.model)
+  test.anova$`Pr(>F)`[2]
+}
+stopCluster(cl)
+names(pval.concpg) <- rownames(tbpc_bulk)
+```
+
+
+
+```{r}
+tbpc.fixed.concpg.pval <- data.frame("pval.concpg"=pval.concpg)
+tbpc.fixed.concpg.pval.bh <- apply(tbpc.fixed.concpg.pval, 2, function(x){p.adjust(x, "BH")})
+tbpc.fixed.concpg.pval.bh <- as.data.frame(tbpc.fixed.concpg.pval.bh)
+library(openxlsx)
+wb <- createWorkbook()
+addWorksheet(wb, "tbpc_ri_concpg_pval")
+addWorksheet(wb, "tbpc_ri_concpg_pval_bh")
+writeData(wb, "tbpc_ri_concpg_pval", tbpc.ri.concpg.pval, rowNames = TRUE)
+writeData(wb, "tbpc_ri_concpg_pval_bh", tbpc.ri.concpg.pval.bh, rowNames = TRUE)
+saveWorkbook(wb, "/storage/windows-backup/D drive/Penghui/collab/study1_tbpc_concpg_fixed.xlsx", overwrite = TRUE)
+colSums(tbpc.fixed.concpg.pval.bh < 0.05)
+```
+
+
+
+
